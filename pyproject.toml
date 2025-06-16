@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batch_manager"
+version = "0.1.0"
+description = "Terminal UI for managing OpenAI batches and files"
+readme = ""
+requires-python = ">=3.8"
+authors = [{ name="Junyeol Yu", email="ryuwhale95@gmail.com" }]
+
+[tool.setuptools]
+packages = ["batch_manager"]
+
+[tool.setuptools.package-data]
+batch_manager = ["*.css", "config.ini.example"]
+
+[tool.setuptools.exclude-package-data]
+batch_manager = ["*.pyc", "__pycache__"]
+
+[project.scripts]
+batch-manager = "batch_manager.main:main"
