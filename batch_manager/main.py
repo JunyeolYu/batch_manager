@@ -27,8 +27,8 @@ def get_config_path():
 
 CONFIG_FILE = get_config_path()
 BATCH_HEADERS = ["ID", "Status", "Created At"]
-# For file listing, show filename (id), size in MB, purpose, created
-FILE_HEADERS = ["Filename", "Size (MB)", "Purpose", "Created At"]
+# For file listing, show filename (id), size, purpose, created
+FILE_HEADERS = ["Filename", "Size", "Purpose", "Created At"]
 DOWNLOAD_DIR = "downloads"
 
 
@@ -39,6 +39,23 @@ def human_readable_mb(bytes_size: int) -> str:
     mb = bytes_size / (1024 * 1024)
     return f"{mb:.0f} MB"
 
+def human_readable_kb(bytes_size: int) -> str:
+    """
+    Convert bytes to human-readable megabytes string.
+    """
+    kb = bytes_size / (1024)
+    return f"{kb:.0f} KB"
+
+def human_readable_bytes(bytes_size: int) -> str:
+    """
+    Convert bytes to human-readable bytes string.
+    """
+    if bytes_size < 1024:
+        return f"{bytes_size} B"
+    elif bytes_size < 1024 * 1024:
+        return f"{human_readable_kb(bytes_size)}"
+    else:
+        return f"{human_readable_mb(bytes_size)}"
 
 class ProfileSelected(Message):
     """
@@ -169,9 +186,9 @@ class BatchManagerScreen(Screen):
             table = self.query_one(DataTable)
             for f in resp.data:
                 created = datetime.fromtimestamp(f.created_at).strftime("%Y-%m-%d %H:%M")
-                size_mb = human_readable_mb(f.bytes)
+                size_h = human_readable_bytes(f.bytes)
                 display_name = f.filename or "<no-name>"
-                table.add_row(f"{display_name}", size_mb, f.purpose, created, key=f.id)
+                table.add_row(f"{display_name}", size_h, f.purpose, created, key=f.id)
         except APIError as e:
             self.notify(f"API Error: {e}", severity="error")
 
@@ -248,7 +265,7 @@ class BatchManagerScreen(Screen):
         try:
             f = await self.client.files.retrieve(file_id)
             created = datetime.fromtimestamp(f.created_at).strftime("%Y-%m-%d %p %I:%M")
-            size_mb = human_readable_mb(f.bytes)
+            size_h = human_readable_bytes(f.bytes)
             status = "✅ Ready"
             md = f"""
 # FILE
@@ -258,7 +275,7 @@ class BatchManagerScreen(Screen):
 - Status: {status}
 - File ID: {f.id}
 - Purpose: {f.purpose}
-- Size: {size_mb}
+- Size: {size_h}
 - Created at: {created}
 """
             self.query_one("#details-view", Markdown).update(md)
