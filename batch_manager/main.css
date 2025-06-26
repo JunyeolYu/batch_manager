@@ -20,7 +20,15 @@
     padding: 1;
 }
 
-#button-bar {
+#left-button-bar {
+    /* This container should only take up the height it needs */
+    height: auto; 
+    width: 100%;
+    align: center middle;
+    padding-bottom: 1;
+}
+
+#right-button-bar {
     /* This container should only take up the height it needs */
     height: auto; 
     width: 100%;
@@ -48,4 +56,32 @@
 
 #status-label {
     margin-bottom: 1;
+}
+
+ConfirmDeleteFile {
+    align: center middle;
+}
+
+#dialog {
+    grid-size: 1 2;
+    grid-rows: 1fr 1fr;
+    grid-columns: 1fr 1fr;
+    padding: 0 0;
+    width: 60;
+    height: 12;
+    border: thick $background 80%;
+    background: $surface;
+}
+
+#question {
+    height: 1fr;
+    width: 1fr;
+    content-align: center middle;
+}
+
+#dialog-button-bar {
+    /* This container should only take up the height it needs */
+    height: auto; 
+    width: 100%;
+    align: center middle;
 }

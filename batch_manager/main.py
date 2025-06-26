@@ -7,8 +7,8 @@ from pathlib import Path
 
 from openai import AsyncOpenAI, APIError
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, Horizontal
-from textual.screen import Screen
+from textual.containers import Vertical, Horizontal, Grid
+from textual.screen import Screen, ModalScreen
 from textual.widgets import (
     Header,
     Footer,
@@ -67,6 +67,30 @@ class ProfileSelected(Message):
         self.api_key = api_key
         super().__init__()
 
+class ConfirmDeleteFile(ModalScreen[bool]):
+    """
+    Confirmation modal screen for deleting a file.
+    """
+    def __init__(self, file_id: str, filename: str):
+        super().__init__()
+        self.file_id = file_id
+        self.filename = filename
+        
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(f"Are you sure you would like to delete the file {self.filename} ({self.file_id})?", id="question"),
+            Horizontal(
+                Button("Delete file", variant="error", id="delete"),
+                Button("Cancel", variant="primary", id="cancel"),
+                id="dialog-button-bar"),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "delete":
+            self.dismiss(True)
+        else:
+            self.dismiss(False)
 
 class KeySelectionScreen(Screen):
     """
@@ -139,13 +163,15 @@ class BatchManagerScreen(Screen):
         with Horizontal(id="main-container"):
             with Vertical(id="left-pane"):
                 yield Static(f"[b]{self.profile_name}[/b]", id="profile-panel")
-                with Horizontal(id="button-bar"):
+                with Horizontal(id="left-button-bar"):
                     yield Button("List Batches", id="btn-list-batches", variant="primary")
                     yield Button("List Files", id="btn-list-files", variant="default")
                     yield Button("Change Key", id="btn-change-key", variant="warning")
                 yield DataTable(id="batch-table", cursor_type="row")
             with Vertical(id="right-pane"):
-                yield Button("Download", id="btn-download", variant="success", disabled=True)
+                with Horizontal(id="right-button-bar"):
+                    yield Button("Download", id="btn-download", variant="success", disabled=True)
+                    yield Button("Delete", id="btn-delete", variant="error", disabled=True)
                 yield Markdown("Select an item to view details.", id="details-view")
         yield Footer()
 
@@ -160,6 +186,9 @@ class BatchManagerScreen(Screen):
         table = self.query_one(DataTable)
         table.clear(columns=True)
         table.add_columns(*BATCH_HEADERS)
+        # Batches should not allow delete
+        btn = self.query_one("#btn-delete", Button)
+        btn.disabled = True
         self.run_worker(self.list_batches_worker(), exclusive=True)
 
     async def list_batches_worker(self) -> None:
@@ -182,7 +211,7 @@ class BatchManagerScreen(Screen):
 
     async def list_files_worker(self) -> None:
         try:
-            resp = await self.client.files.list(limit=20)
+            resp = await self.client.files.list()
             table = self.query_one(DataTable)
             for f in resp.data:
                 created = datetime.fromtimestamp(f.created_at).strftime("%Y-%m-%d %H:%M")
@@ -202,6 +231,11 @@ class BatchManagerScreen(Screen):
             self.app.push_screen(KeySelectionScreen())
         elif btn == "btn-download" and self.current_output_file_id:
             self.run_worker(self.download_output_worker(), exclusive=True)
+        elif btn == "btn-delete" and self.current_output_file_id:
+            confirmed = self.app.push_screen(ConfirmDeleteFile(self.current_output_file_id, self.current_file_name))
+            
+            if confirmed:
+                self.run_worker(self.delete_file_worker(), exclusive=True)
 
     async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         key = event.row_key.value
@@ -281,6 +315,8 @@ class BatchManagerScreen(Screen):
             self.query_one("#details-view", Markdown).update(md)
             btn = self.query_one("#btn-download", Button)
             btn.disabled = False
+            btn = self.query_one("#btn-delete", Button)
+            btn.disabled = False
             self.current_output_file_id = file_id
             self.current_file_name = f.filename or file_id
         except APIError as e:
@@ -310,7 +346,22 @@ class BatchManagerScreen(Screen):
         except Exception as e:
             self.notify(f"Error: {e}", severity="error")
 
+    async def delete_file_worker(self):
+        file_id = self.current_output_file_id
+        file_name = self.current_file_name or file_id  
+        if not file_id:
+            self.notify(f"File ID is not set.", severity="error")
+            return
 
+        try:
+            resp = await self.client.files.delete(file_id)
+            if resp.deleted:
+                self.notify(f"File {file_name} deleted successfully.", title="Delete")
+            else:
+                self.notify(f"Failed to delete file {file_name}.", severity="error")
+        except Exception as e:
+            self.notify(f"Error: {e}", severity="error")
+        
 class BatchTUI(App):
     """
     Main application class, manages screen transitions.
