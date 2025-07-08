@@ -265,12 +265,13 @@ class BatchManagerScreen(Screen):
             self.notify(f"API Error: {e}", severity="error")
 
     def action_list_files(self) -> None:
-        self.notify("Loading files...", title="Fetch")
+        self.notify("Loading files...", title="Fetch", timeout=1)
         self.table_mode = "files"
         table = self.query_one(DataTable)
         table.clear(columns=True)
         table.add_columns(*FILE_HEADERS)
         self.update_action_button()
+        self.query_one("#details-view", Markdown).update("Select an item to view details.")
         self.run_worker(self.list_files_worker(), exclusive=True)
 
     async def list_files_worker(self) -> None:
@@ -296,10 +297,10 @@ class BatchManagerScreen(Screen):
         elif btn == "btn-download" and self.current_output_file_id:
             self.run_worker(self.download_output_worker(), exclusive=True)
         elif btn == "btn-delete" and self.current_output_file_id:
-            confirmed = self.app.push_screen(ConfirmDeleteFile(self.current_output_file_id, self.current_file_name))
-            
-            if confirmed:
-                self.run_worker(self.delete_file_worker(), exclusive=True)
+            self.app.push_screen(
+                ConfirmDeleteFile(self.current_output_file_id, self.current_file_name),
+                self.delete_file_worker
+            )
                 
         elif btn == "btn-action":
             if self.table_mode == "batches":
@@ -317,7 +318,7 @@ class BatchManagerScreen(Screen):
             self.run_worker(self.retrieve_file_worker(key), exclusive=True)
 
     async def retrieve_batch_worker(self, batch_id: str):
-        self.notify(f"Fetching batch {batch_id}...", title="Details")
+        # self.notify(f"Fetching batch {batch_id}...", title="Details")
         try:
             b = await self.client.batches.retrieve(batch_id)
             # fetch input/output filenames
@@ -367,7 +368,7 @@ class BatchManagerScreen(Screen):
             self.notify(f"API Error: {e}", severity="error")
 
     async def retrieve_file_worker(self, file_id: str):
-        self.notify(f"Fetching file {file_id}...", title="Details")
+        # self.notify(f"Fetching file {file_id}...", title="Details")
         try:
             f = await self.client.files.retrieve(file_id)
             created = datetime.fromtimestamp(f.created_at).strftime("%Y-%m-%d %p %I:%M")
@@ -418,7 +419,14 @@ class BatchManagerScreen(Screen):
         except Exception as e:
             self.notify(f"Error: {e}", severity="error")
 
-    async def delete_file_worker(self):
+    async def delete_file_worker(self, confirmed: bool):
+        '''
+        Delete the currently selected file.
+        '''
+        if not confirmed:
+            self.notify("File deletion cancelled.", title="Delete")
+            return
+
         file_id = self.current_output_file_id
         file_name = self.current_file_name or file_id  
         if not file_id:
@@ -431,6 +439,7 @@ class BatchManagerScreen(Screen):
                 self.notify(f"File {file_name} deleted successfully.", title="Delete")
             else:
                 self.notify(f"Failed to delete file {file_name}.", severity="error")
+            self.action_list_files()
         except Exception as e:
             self.notify(f"Error: {e}", severity="error")
 
