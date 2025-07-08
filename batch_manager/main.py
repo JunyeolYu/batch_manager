@@ -337,22 +337,43 @@ class BatchManagerScreen(Screen):
             except:
                 output_name = None
             err = b.errors.data[0].message if b.errors and b.errors.data else "None"
+            # timestamp parsing
+            stamp_list = ["created_at", "in_progress_at",
+                          "finalizing_at", "completed_at", "failed_at",
+                          "expired_at", "cancelling_at", "cancelled_at"
+                        ]
+            
+            timestamps = []
+            for ts in stamp_list:
+                if getattr(b, ts) is not None:
+                    timestamps.append({
+                        "name": ts.replace("_at", " ").strip(),
+                        "time": getattr(b, ts),
+                        "value": datetime.fromtimestamp(getattr(b, ts)).strftime("%Y-%m-%d %H:%M")
+                    })
+            timestamps.sort(key=lambda x: x["time"])
+
             md = f"""
 # BATCH 
 `{b.id}`
+
 ---
 - **Status**: {b.status}
 - **Endpoint**: {b.endpoint}
 
 **Requests**: {b.request_counts.completed}/{b.request_counts.total} (failed {b.request_counts.failed})
 
-**Files**:
+📂 **Files**:
 - Input: {b.input_file_id}
   - File Name: {input_name or 'N/A'}
 - Output: {b.output_file_id or 'N/A'}
   - File Name: {output_name or 'N/A'}
 
 **Errors**: {err}
+
+---
+⌚ **Timestamps**:
+{"\n".join([f"- {ts['value']} -> {ts['name']}" for ts in timestamps])}
 """        
             self.query_one("#details-view", Markdown).update(md)
             btn = self.query_one("#btn-download", Button)
