@@ -145,6 +145,60 @@ class KeySelectionScreen(Screen):
                 f"[b]Error:[/b] Invalid or missing 'api_key' in profile '{profile_name}'."
             )
 
+class FileBrowserModal(ModalScreen[str]):
+    """ Modal screen for browsing and selecting files to upload."""
+    def __init__(self, start_path: str = "."):
+        super().__init__()
+        self.current_path = Path(start_path).resolve()
+        self.filename = ""
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label(f"Select file to upload."),
+            ListView(id="file-list"),
+            Horizontal(
+                Button("Upload", id="upload", variant="primary"),
+                Button("Cancel", id="cancel", variant="error"),
+                id="dialog-button-bar"
+            ),
+            id="dialog_upload"
+        )
+    
+    def on_mount(self):
+        self.refresh_file_list()
+
+    def refresh_file_list(self):
+        file_list = self.query_one("#file-list", ListView)
+        file_list.clear()
+        # move up to parent directory
+        if self.current_path.parent != self.current_path:
+            file_list.append(ListItem(Label(".. (upper)", id="up")))
+        # list current directory contents
+        for entry in sorted(self.current_path.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            if entry.is_dir():
+                file_list.append(ListItem(Label(f"> {entry.name}", id="dir")))
+            else:
+                file_list.append(ListItem(Label(entry.name, id="file")))
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        label = event.item.query_one(Label)
+        id_ = label.id
+        text = label.renderable
+        if id_ == "up":
+            self.current_path = self.current_path.parent
+            self.refresh_file_list()
+        elif id_ == "dir":
+            dirname = text.replace("> ", "")
+            self.current_path = self.current_path / dirname
+            self.refresh_file_list()
+        elif id_ == "file":
+            self.filename = text
+            
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss("")
+        elif event.button.id == "upload":
+            self.notify(f"Selected file: {self.filename}", title="File Selected")
+            self.dismiss(str(self.current_path / self.filename))
 
 class BatchManagerScreen(Screen):
     """
@@ -172,8 +226,16 @@ class BatchManagerScreen(Screen):
                 with Horizontal(id="right-button-bar"):
                     yield Button("Download", id="btn-download", variant="success", disabled=True)
                     yield Button("Delete", id="btn-delete", variant="error", disabled=True)
+                    yield Button("Create", id="btn-action", variant="primary", disabled=False)
                 yield Markdown("Select an item to view details.", id="details-view")
         yield Footer()
+
+    def update_action_button(self):
+        btn = self.query_one("#btn-action", Button)
+        if self.table_mode == "batches":
+            btn.label = "Create"
+        else:
+            btn.label = "Upload"
 
     def on_mount(self) -> None:
         table = self.query_one(DataTable)
@@ -189,6 +251,7 @@ class BatchManagerScreen(Screen):
         # Batches should not allow delete
         btn = self.query_one("#btn-delete", Button)
         btn.disabled = True
+        self.update_action_button()
         self.run_worker(self.list_batches_worker(), exclusive=True)
 
     async def list_batches_worker(self) -> None:
@@ -207,6 +270,7 @@ class BatchManagerScreen(Screen):
         table = self.query_one(DataTable)
         table.clear(columns=True)
         table.add_columns(*FILE_HEADERS)
+        self.update_action_button()
         self.run_worker(self.list_files_worker(), exclusive=True)
 
     async def list_files_worker(self) -> None:
@@ -236,7 +300,15 @@ class BatchManagerScreen(Screen):
             
             if confirmed:
                 self.run_worker(self.delete_file_worker(), exclusive=True)
-
+                
+        elif btn == "btn-action":
+            if self.table_mode == "batches":
+                # Create new batch
+                self.notify("Creating a new batch is not implemented yet.", severity="warning")
+            else:
+                # Upload file
+                self.app.push_screen(FileBrowserModal(), self.upload_file_worker)
+    
     async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         key = event.row_key.value
         if self.table_mode == "batches":
@@ -361,6 +433,22 @@ class BatchManagerScreen(Screen):
                 self.notify(f"Failed to delete file {file_name}.", severity="error")
         except Exception as e:
             self.notify(f"Error: {e}", severity="error")
+
+    async def upload_file_worker(self, file_path: str):
+        '''
+        Upload a file to OpenAI storage.
+        '''
+        if file_path == "":
+            return
+        try:
+            await self.client.files.create(
+                file=open(file_path, "rb"),
+                purpose="batch",
+            )
+            self.notify(f"File \n{file_path} uploaded successfully.", title="Upload", timeout=5)
+            self.action_list_files() # for refresh
+        except Exception as e:
+            self.notify(f"Error uploading file: {e}", severity="error")
         
 class BatchTUI(App):
     """
