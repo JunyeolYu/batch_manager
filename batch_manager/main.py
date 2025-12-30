@@ -352,7 +352,9 @@ class BatchManagerScreen(Screen):
                         "value": datetime.fromtimestamp(getattr(b, ts)).strftime("%Y-%m-%d %H:%M")
                     })
             timestamps.sort(key=lambda x: x["time"])
-
+            text_timestamp = "\n".join(
+                [f"- {ts['value']} -> {ts['name']}" for ts in timestamps]
+            )
             md = f"""
 # BATCH 
 `{b.id}`
@@ -373,8 +375,8 @@ class BatchManagerScreen(Screen):
 
 ---
 ⌚ **Timestamps**:
-{"\n".join([f"- {ts['value']} -> {ts['name']}" for ts in timestamps])}
-"""        
+{text_timestamp}
+"""
             self.query_one("#details-view", Markdown).update(md)
             btn = self.query_one("#btn-download", Button)
             if b.output_file_id:
