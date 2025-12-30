@@ -5,6 +5,7 @@
     background: $surface;
 }
 
+
 #left-pane {
     width: 60%;
     height: 100%;
@@ -12,6 +13,13 @@
     padding: 1;
     /* This makes child widgets arrange vertically */
     layout: vertical; 
+}
+
+/* Emphasize the selected API key name panel */
+#profile-panel {
+    text-style: bold;
+    content-align: center middle;
+    padding: 1 1;
 }
 
 #right-pane {
@@ -26,6 +34,11 @@
     width: 100%;
     align: center middle;
     padding-bottom: 1;
+}
+
+/* Add a small gap between Change Key and Refresh */
+#btn-refresh {
+    margin-left: 5;
 }
 
 #right-button-bar {
@@ -45,7 +58,15 @@
 
 #details-view {
     width: 100%;
-    height: 100%;
+    /* allow the details pane to flex so controls below remain visible */
+    height: 1fr;
+    min-height: 0;
+    overflow: auto;
+}
+
+/* ensure right pane stacks vertically so the details view and button don't overlap */
+#right-pane {
+    layout: vertical;
 }
 
 /* Styles for the key selection screen */
@@ -90,6 +111,10 @@ FileBrowserModal {
     align: center middle;
 }
 
+CreateBatchModal {
+    align: center middle;
+}
+
 #dialog_upload {
     grid-size: 1 3;
     grid-rows: 10% 80% 10%;
@@ -98,4 +123,16 @@ FileBrowserModal {
     height: 40;
     border: thick $background 80%;
     background: $surface;
+}
+
+/* Emphasize labels inside the create modal for clarity */
+#create-title {
+    text-style: bold;
+    padding-bottom: 1;
+}
+
+#label-endpoint,
+#label-input {
+    text-style: bold;
+    padding-bottom: 1;
 }

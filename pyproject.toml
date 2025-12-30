@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batch_manager"
-version = "0.2.0"
+version = "0.3.0"
 description = "Terminal UI for managing OpenAI batches and files"
 readme = ""
 requires-python = ">=3.9"

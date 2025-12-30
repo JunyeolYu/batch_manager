@@ -18,6 +18,7 @@ from textual.widgets import (
     ListView,
     ListItem,
     Label,
+    Input,
     Static,
 )
 from textual.message import Message
@@ -156,6 +157,7 @@ class FileBrowserModal(ModalScreen[str]):
             Label(f"Select file to upload."),
             ListView(id="file-list"),
             Horizontal(
+                Button("Refresh", id="refresh", variant="success"),
                 Button("Upload", id="upload", variant="primary"),
                 Button("Cancel", id="cancel", variant="error"),
                 id="dialog-button-bar"
@@ -196,9 +198,79 @@ class FileBrowserModal(ModalScreen[str]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss("")
+        elif event.button.id == "refresh":
+            self.refresh_file_list()
         elif event.button.id == "upload":
             self.notify(f"Selected file: {self.filename}", title="File Selected")
             self.dismiss(str(self.current_path / self.filename))
+
+
+class CreateBatchModal(ModalScreen[str]):
+    """Modal to collect batch creation parameters: select endpoint and optional input file from available files.
+    The modal accepts an optional `files` list of tuples (file_id, filename).
+    """
+    def __init__(self, files=None):
+        super().__init__()
+        self.files = files or []
+        self.selected_endpoint = None
+        self.selected_file_id = ""
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(
+            Label("Create a new batch", id="create-title"),
+            Label("Choose endpoint:", id="label-endpoint"),
+            ListView(id="endpoint-list"),
+            Label("Select input file:", id="label-input"),
+            ListView(id="files-list"),
+            Horizontal(
+                Button("Create", id="create", variant="primary"),
+                Button("Cancel", id="cancel", variant="error"),
+                id="dialog-button-bar",
+            ),
+            id="dialog_upload",
+        )
+
+    def on_mount(self) -> None:
+        # populate endpoint list
+        endpoint_list = self.query_one("#endpoint-list", ListView)
+        endpoint_list.clear()
+        for ep in ["/v1/responses", "/v1/moderations", "/v1/chat/completions", "/v1/embeddings", "/v1/completions"]:
+            endpoint_list.append(ListItem(Label(ep)))
+
+        # populate files list
+        files_list = self.query_one("#files-list", ListView)
+        files_list.clear()
+        files_list.append(ListItem(Label("<none>", id="none")))
+        for fid, fname in self.files:
+            # display filename but set id to file id via Label id
+            files_list.append(ListItem(Label(fname, id=str(fid))))
+        # focus endpoint list
+        try:
+            self.query_one("#endpoint-list", ListView).focus()
+        except Exception:
+            pass
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        # determine which list sent the event
+        lst = event.item.parent
+        label = event.item.query_one(Label)
+        text = label.renderable
+        lid = label.id
+        if lst.id == "endpoint-list":
+            self.selected_endpoint = text
+        elif lst.id == "files-list":
+            if lid == "none":
+                self.selected_file_id = ""
+            else:
+                self.selected_file_id = lid
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss("")
+        elif event.button.id == "create":
+            endpoint = self.selected_endpoint or "/responses"
+            fileid = self.selected_file_id or ""
+            self.dismiss(f"{endpoint}||{fileid}")
 
 class BatchManagerScreen(Screen):
     """
@@ -211,6 +283,8 @@ class BatchManagerScreen(Screen):
         self.table_mode = "batches"
         self.current_output_file_id = None
         self.current_file_name = None
+        self.cached_files: list[tuple[str, str]] = []
+        self.current_batch_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header(name="Batch & File Manager")
@@ -221,6 +295,7 @@ class BatchManagerScreen(Screen):
                     yield Button("List Batches", id="btn-list-batches", variant="primary")
                     yield Button("List Files", id="btn-list-files", variant="default")
                     yield Button("Change Key", id="btn-change-key", variant="warning")
+                    yield Button("Refresh", id="btn-refresh", variant="success", disabled=False)
                 yield DataTable(id="batch-table", cursor_type="row")
             with Vertical(id="right-pane"):
                 with Horizontal(id="right-button-bar"):
@@ -228,6 +303,7 @@ class BatchManagerScreen(Screen):
                     yield Button("Delete", id="btn-delete", variant="error", disabled=True)
                     yield Button("Create", id="btn-action", variant="primary", disabled=False)
                 yield Markdown("Select an item to view details.", id="details-view")
+                yield Button("Cancel Batch", id="btn-cancel-batch", variant="warning", disabled=True)
         yield Footer()
 
     def update_action_button(self):
@@ -251,18 +327,47 @@ class BatchManagerScreen(Screen):
         # Batches should not allow delete
         btn = self.query_one("#btn-delete", Button)
         btn.disabled = True
+        # cancel batch button should start disabled until a batch is selected
+        try:
+            self.query_one("#btn-cancel-batch", Button).disabled = True
+            self.current_batch_id = None
+        except Exception:
+            pass
         self.update_action_button()
         self.run_worker(self.list_batches_worker(), exclusive=True)
 
     async def list_batches_worker(self) -> None:
         try:
-            resp = await self.client.batches.list(limit=20)
+            resp = await self.client.batches.list(limit=30)
             table = self.query_one(DataTable)
             for b in resp.data:
                 created = datetime.fromtimestamp(b.created_at).strftime("%Y-%m-%d %H:%M")
                 table.add_row(b.id, b.status, created, key=b.id)
         except APIError as e:
             self.notify(f"API Error: {e}", severity="error")
+
+    async def cancel_batch_worker(self):
+        """Cancel the currently-selected batch."""
+        batch_id = self.current_batch_id
+        if not batch_id:
+            self.notify("No batch selected to cancel.", severity="error")
+            return
+        self.notify(f"Cancelling batch {batch_id}...", title="Cancel")
+        try:
+            resp = await self.client.batches.cancel(batch_id)
+            # some SDKs return an object; otherwise assume success if no exception
+            self.notify(f"Cancel requested for {batch_id}", title="Cancel", timeout=3)
+            # refresh list and disable cancel button
+            self.action_list_batches()
+            try:
+                self.query_one("#btn-cancel-batch", Button).disabled = True
+            except Exception:
+                pass
+            self.current_batch_id = None
+        except APIError as e:
+            self.notify(f"API Error: {e}", severity="error")
+        except Exception as e:
+            self.notify(f"Error cancelling batch: {e}", severity="error")
 
     def action_list_files(self) -> None:
         self.notify("Loading files...", title="Fetch", timeout=1)
@@ -272,16 +377,25 @@ class BatchManagerScreen(Screen):
         table.add_columns(*FILE_HEADERS)
         self.update_action_button()
         self.query_one("#details-view", Markdown).update("Select an item to view details.")
+        # when listing files, cancel batch button should be disabled
+        try:
+            self.query_one("#btn-cancel-batch", Button).disabled = True
+            self.current_batch_id = None
+        except Exception:
+            pass
         self.run_worker(self.list_files_worker(), exclusive=True)
 
     async def list_files_worker(self) -> None:
         try:
             resp = await self.client.files.list()
             table = self.query_one(DataTable)
+            # cache files for reuse in create modal
+            self.cached_files = []
             for f in resp.data:
                 created = datetime.fromtimestamp(f.created_at).strftime("%Y-%m-%d %H:%M")
                 size_h = human_readable_bytes(f.bytes)
                 display_name = f.filename or "<no-name>"
+                self.cached_files.append((f.id, display_name))
                 table.add_row(f"{display_name}", size_h, f.purpose, created, key=f.id)
         except APIError as e:
             self.notify(f"API Error: {e}", severity="error")
@@ -301,14 +415,26 @@ class BatchManagerScreen(Screen):
                 ConfirmDeleteFile(self.current_output_file_id, self.current_file_name),
                 self.delete_file_worker
             )
+        elif btn == "btn-cancel-batch":
+            # cancel current batch
+            if self.current_batch_id:
+                self.run_worker(self.cancel_batch_worker(), exclusive=True)
+            else:
+                self.notify("No batch selected to cancel.", severity="error")
                 
         elif btn == "btn-action":
             if self.table_mode == "batches":
-                # Create new batch
-                self.notify("Creating a new batch is not implemented yet.", severity="warning")
+                # Fetch available files and open create-batch modal
+                self.run_worker(self.open_create_modal_worker(), exclusive=True)
             else:
                 # Upload file
                 self.app.push_screen(FileBrowserModal(), self.upload_file_worker)
+        elif btn == "btn-refresh":
+            # refresh current view
+            if self.table_mode == "batches":
+                self.action_list_batches()
+            else:
+                self.action_list_files()
     
     async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         key = event.row_key.value
@@ -387,6 +513,12 @@ class BatchManagerScreen(Screen):
                 btn.disabled = True
                 self.current_output_file_id = None
                 self.current_file_name = None
+            # enable cancel button for this batch
+            try:
+                self.query_one("#btn-cancel-batch", Button).disabled = False
+                self.current_batch_id = b.id
+            except Exception:
+                self.current_batch_id = None
         except APIError as e:
             self.notify(f"API Error: {e}", severity="error")
 
@@ -481,8 +613,62 @@ class BatchManagerScreen(Screen):
             self.action_list_files() # for refresh
         except Exception as e:
             self.notify(f"Error uploading file: {e}", severity="error")
+    
+    async def create_batch_worker(self, payload: str):
+        """
+        Create a new batch using the provided payload returned from the CreateBatchModal.
+        Payload format: "<endpoint>||<input_file_id>" (input_file_id optional)
+        """
+        if not payload:
+            return
+        try:
+            endpoint, fileid = payload.split("||", 1)
+        except ValueError:
+            endpoint = payload
+            fileid = ""
+        endpoint = (endpoint or "").strip()
+        fileid = (fileid or "").strip()
+
+        if not endpoint:
+            endpoint = "/v1/responses"
+
+        # Build parameters to match OpenAI Batch API example
+        params = {
+            "endpoint": endpoint,
+            # sensible default window; user can change in code if needed
+            "completion_window": "24h",
+        }
+        if fileid:
+            params["input_file_id"] = fileid
+
+        self.notify(f"Creating batch (endpoint={endpoint})...", title="Create")
+        try:
+            resp = await self.client.batches.create(**params)
+            # response shape may vary; try common attributes
+            bid = getattr(resp, "id", None) or getattr(resp, "batch", None) or "<unknown>"
+            self.notify(f"Batch created: {bid}", title="Create", timeout=4)
+            # refresh list
+            self.action_list_batches()
+        except Exception as e:
+            self.notify(f"Error creating batch: {e}", severity="error")
+    
+    async def open_create_modal_worker(self):
+        """Fetch file list from API and open the CreateBatchModal with filenames mapped to ids."""
+        # prefer cached files (from List Files) so the modal reflects the current UI list
+        files = list(self.cached_files) if self.cached_files else []
+        if not files:
+            try:
+                resp = await self.client.files.list()
+                for f in resp.data:
+                    display_name = f.filename or f.id
+                    files.append((f.id, display_name))
+            except Exception:
+                files = []
+
+        # push modal on main app; modal will return endpoint||fileid
+        self.app.push_screen(CreateBatchModal(files=files), self.create_batch_worker)
         
-class BatchTUI(App):
+class BatchManager(App):
     """
     Main application class, manages screen transitions.
     """
@@ -511,7 +697,7 @@ def copy_example_config_if_needed():
 def main():
     copy_example_config_if_needed()
 
-    app = BatchTUI()
+    app = BatchManager()
     app.run()  
 
 if __name__ == "__main__":
